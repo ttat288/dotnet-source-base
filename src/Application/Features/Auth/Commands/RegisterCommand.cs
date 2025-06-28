@@ -14,16 +14,16 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, BaseRespo
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IPasswordHasher _passwordHasher;
-    private readonly IJwtTokenGenerator _jwtTokenGenerator;
+    private readonly ITokenService _tokenService;
 
     public RegisterCommandHandler(
         IUnitOfWork unitOfWork,
         IPasswordHasher passwordHasher,
-        IJwtTokenGenerator jwtTokenGenerator)
+        ITokenService tokenService)
     {
         _unitOfWork = unitOfWork;
         _passwordHasher = passwordHasher;
-        _jwtTokenGenerator = jwtTokenGenerator;
+        _tokenService = tokenService;
     }
 
     public async Task<BaseResponse<AuthResponse>> Handle(RegisterCommand request, CancellationToken cancellationToken)
@@ -46,8 +46,8 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, BaseRespo
         await _unitOfWork.Users.AddAsync(user);
         await _unitOfWork.SaveChangesAsync();
 
-        var token = _jwtTokenGenerator.GenerateToken(user);
-        var refreshToken = _jwtTokenGenerator.GenerateRefreshToken();
+        var token = _tokenService.GenerateAccessToken(user);
+        var refreshToken = _tokenService.GenerateRefreshToken();
 
         user.RefreshToken = refreshToken;
         user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);

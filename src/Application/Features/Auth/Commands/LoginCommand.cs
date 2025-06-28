@@ -4,6 +4,7 @@ using Domain.Common;
 using Domain.Interfaces;
 using MediatR;
 using Application.Common.Exceptions;
+using Application.Common.Constants;
 
 namespace Application.Features.Auth.Commands;
 
@@ -13,35 +14,56 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, BaseResponse<Au
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IPasswordHasher _passwordHasher;
-    private readonly IJwtTokenGenerator _jwtTokenGenerator;
+    private readonly ITokenService _tokenService;
+    private readonly ICacheService _cacheService;
 
     public LoginCommandHandler(
         IUnitOfWork unitOfWork,
         IPasswordHasher passwordHasher,
-        IJwtTokenGenerator jwtTokenGenerator)
+        ITokenService tokenService,
+        ICacheService cacheService)
     {
         _unitOfWork = unitOfWork;
         _passwordHasher = passwordHasher;
-        _jwtTokenGenerator = jwtTokenGenerator;
+        _tokenService = tokenService;
+        _cacheService = cacheService;
     }
 
     public async Task<BaseResponse<AuthResponse>> Handle(LoginCommand request, CancellationToken cancellationToken)
     {
-        var user = await _unitOfWork.Users.FirstOrDefaultAsync(u => u.Email == request.Request.Email);
+        // Try to get user from cache first
+        var cacheKey = CacheKeys.UserByEmail(request.Request.Email);
+        var user = await _cacheService.GetAsync<Domain.Entities.User>(cacheKey, cancellationToken);
+        
+        if (user == null)
+        {
+            // Get from database if not in cache
+            user = await _unitOfWork.Users.FirstOrDefaultAsync(u => u.Email == request.Request.Email);
+            
+            if (user != null)
+            {
+                // Cache the user for future requests
+                await _cacheService.SetAsync(cacheKey, user, CacheSettings.UserCacheExpiry, cancellationToken);
+            }
+        }
         
         if (user == null || !_passwordHasher.VerifyPassword(request.Request.Password, user.PasswordHash))
         {
             throw new UnauthorizedException("Invalid email or password");
         }
 
-        var token = _jwtTokenGenerator.GenerateToken(user);
-        var refreshToken = _jwtTokenGenerator.GenerateRefreshToken();
+        var token = _tokenService.GenerateAccessToken(user);
+        var refreshToken = _tokenService.GenerateRefreshToken();
 
         user.RefreshToken = refreshToken;
         user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
         
         _unitOfWork.Users.Update(user);
         await _unitOfWork.SaveChangesAsync();
+
+        // Update cache with new refresh token
+        await _cacheService.SetAsync(cacheKey, user, CacheSettings.UserCacheExpiry, cancellationToken);
+        await _cacheService.SetAsync(CacheKeys.UserById(user.Id), user, CacheSettings.UserCacheExpiry, cancellationToken);
 
         var response = new AuthResponse
         {

@@ -2,9 +2,10 @@ using Domain.Entities;
 
 namespace Application.Common.Interfaces;
 
-public interface IJwtTokenGenerator
+public interface ITokenService
 {
-    string GenerateToken(User user);
+    string GenerateAccessToken(User user);
     string GenerateRefreshToken();
     bool ValidateToken(string token);
+    Task<User?> GetUserFromToken(string token);
 }
