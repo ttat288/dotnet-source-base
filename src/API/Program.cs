@@ -10,6 +10,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System.Text;
+using Infrastructure.Caching;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -49,12 +51,43 @@ builder.Services.AddSwaggerGen(c =>
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+// Cache Configuration
+builder.Services.Configure<CacheConfiguration>(builder.Configuration.GetSection(CacheConfiguration.SectionName));
+
+var cacheConfig = builder.Configuration.GetSection(CacheConfiguration.SectionName).Get<CacheConfiguration>() ?? new CacheConfiguration();
+
+if (cacheConfig.EnableCaching)
+{
+    if (cacheConfig.Type == CacheType.Redis && !string.IsNullOrEmpty(cacheConfig.RedisConnectionString))
+    {
+        // Redis Cache
+        builder.Services.AddSingleton<IConnectionMultiplexer>(provider =>
+        {
+            return ConnectionMultiplexer.Connect(cacheConfig.RedisConnectionString);
+        });
+        builder.Services.AddScoped<ICacheService, RedisCacheService>();
+    }
+    else
+    {
+        // In-Memory Cache
+        builder.Services.AddMemoryCache();
+        builder.Services.AddScoped<ICacheService, InMemoryCacheService>();
+    }
+}
+else
+{
+    // No-op cache service for when caching is disabled
+    builder.Services.AddScoped<ICacheService, NoCacheService>();
+}
+
 // MediatR
 builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(LoginCommand).Assembly));
 
 // Repositories and Services
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddScoped<IPasswordHasher, PasswordHasher>();
+// Token Service (có thể thay thế JWT bằng service khác)
+builder.Services.AddScoped<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
 
 // JWT Authentication

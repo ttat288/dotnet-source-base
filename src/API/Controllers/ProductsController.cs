@@ -38,4 +38,13 @@ public class ProductsController : ControllerBase
         var result = await _mediator.Send(command);
         return Ok(result);
     }
+
+    [HttpGet("{id}")]
+    [AllowAnonymous]
+    public async Task<ActionResult<BaseResponse<ProductDto>>> GetProductById(Guid id)
+    {
+        var query = new GetProductByIdQuery(id);
+        var result = await _mediator.Send(query);
+        return Ok(result);
+    }
 }

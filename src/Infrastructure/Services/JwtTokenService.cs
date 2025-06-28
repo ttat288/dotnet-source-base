@@ -1,5 +1,6 @@
 using Application.Common.Interfaces;
 using Domain.Entities;
+using Domain.Interfaces;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -9,16 +10,18 @@ using System.Text;
 
 namespace Infrastructure.Services;
 
-public class JwtTokenGenerator : IJwtTokenGenerator
+public class JwtTokenService : ITokenService
 {
     private readonly IConfiguration _configuration;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public JwtTokenGenerator(IConfiguration configuration)
+    public JwtTokenService(IConfiguration configuration, IUnitOfWork unitOfWork)
     {
         _configuration = configuration;
+        _unitOfWork = unitOfWork;
     }
 
-    public string GenerateToken(User user)
+    public string GenerateAccessToken(User user)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]!));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -29,14 +32,19 @@ public class JwtTokenGenerator : IJwtTokenGenerator
             new Claim(ClaimTypes.Email, user.Email),
             new Claim(ClaimTypes.Name, $"{user.FirstName} {user.LastName}"),
             new Claim(ClaimTypes.Role, user.Role.ToString()),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim(JwtRegisteredClaimNames.Iat, 
+                new DateTimeOffset(DateTime.UtcNow).ToUnixTimeSeconds().ToString(), 
+                ClaimValueTypes.Integer64)
         };
 
+        var tokenExpiryHours = _configuration.GetValue<int>("Jwt:ExpiryHours", 1);
+        
         var token = new JwtSecurityToken(
             issuer: _configuration["Jwt:Issuer"],
             audience: _configuration["Jwt:Audience"],
             claims: claims,
-            expires: DateTime.UtcNow.AddHours(1),
+            expires: DateTime.UtcNow.AddHours(tokenExpiryHours),
             signingCredentials: credentials
         );
 
@@ -45,7 +53,7 @@ public class JwtTokenGenerator : IJwtTokenGenerator
 
     public string GenerateRefreshToken()
     {
-        var randomNumber = new byte[32];
+        var randomNumber = new byte[64];
         using var rng = RandomNumberGenerator.Create();
         rng.GetBytes(randomNumber);
         return Convert.ToBase64String(randomNumber);
@@ -75,6 +83,26 @@ public class JwtTokenGenerator : IJwtTokenGenerator
         catch
         {
             return false;
+        }
+    }
+
+    public async Task<User?> GetUserFromToken(string token)
+    {
+        try
+        {
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var jsonToken = tokenHandler.ReadJwtToken(token);
+            
+            var userIdClaim = jsonToken?.Claims?.FirstOrDefault(x => x.Type == ClaimTypes.NameIdentifier)?.Value;
+            
+            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+                return null;
+
+            return await _unitOfWork.Users.GetByIdAsync(userId);
+        }
+        catch
+        {
+            return null;
         }
     }
 }

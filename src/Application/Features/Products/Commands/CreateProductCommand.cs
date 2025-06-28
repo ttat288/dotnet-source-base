@@ -4,6 +4,8 @@ using Domain.Entities;
 using Domain.Interfaces;
 using MediatR;
 using Application.Common.Exceptions;
+using Application.Common.Constants;
+using Application.Common.Interfaces;
 
 namespace Application.Features.Products.Commands;
 
@@ -12,10 +14,12 @@ public record CreateProductCommand(CreateProductRequest Request, Guid UserId) : 
 public class CreateProductCommandHandler : IRequestHandler<CreateProductCommand, BaseResponse<ProductDto>>
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly ICacheService _cacheService;
 
-    public CreateProductCommandHandler(IUnitOfWork unitOfWork)
+    public CreateProductCommandHandler(IUnitOfWork unitOfWork, ICacheService cacheService)
     {
         _unitOfWork = unitOfWork;
+        _cacheService = cacheService;
     }
 
     public async Task<BaseResponse<ProductDto>> Handle(CreateProductCommand request, CancellationToken cancellationToken)
@@ -39,6 +43,9 @@ public class CreateProductCommandHandler : IRequestHandler<CreateProductCommand,
 
         await _unitOfWork.Products.AddAsync(product);
         await _unitOfWork.SaveChangesAsync();
+
+        // Invalidate products list cache
+        await _cacheService.RemoveByPatternAsync($"{CacheKeys.PRODUCTS_LIST}*", cancellationToken);
 
         var productDto = new ProductDto
         {
